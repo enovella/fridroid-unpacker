@@ -5,7 +5,7 @@
  * Created: 2019/6/11
  * Dump dex file for packed apks
  * Hook art/runtime/dex_file.cc OpenMemory or OpenCommon
- * Support Version: Android 4.4 up to Android 9.0
+ * Support Version: Android 4.4 up to Android 11.0
  */
 
 
@@ -46,13 +46,17 @@ function getFunctionName(){
     // Android 5: hook OpenMemory
     // after Android 5: hook OpenCommon
     if (g_AndroidOSVersion > 4){ // android 5 and later version
-        var artExports =  Module.enumerateExportsSync("libart.so");
+        // OpenCommon is in libdexfile.so in android 10 and later
+        var soName = g_AndroidOSVersion >= 10 ? "libdexfile.so" : "libart.so";
+        var artExports =  Module.enumerateExportsSync(soName);
         for(i = 0; i< artExports.length; i++){
             if(artExports[i].name.indexOf("OpenMemory") !== -1){
                 functionName = artExports[i].name;
                 logPrint("[*] Export index: " + i + " -> "+ functionName);
                 break;
             }else if(artExports[i].name.indexOf("OpenCommon") !== -1){
+                if (g_AndroidOSVersion >= 10 && artExports[i].name.indexOf("ArtDexFileLoader") !== -1)
+                    continue;
                 functionName = artExports[i].name;
                 logPrint("[*] Export index: " + i + " -> "+ functionName);
                 break;
