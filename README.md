@@ -22,7 +22,7 @@ frida环境搭建，参考frida官网：frida。
 
 0x2 脚本用法
 ----
-在手机上启动frida server端 执行 frida -U -f com.xxx.xxx -l dumpDex.js --no-pause 脱壳后的dex保存在/data/data/应用包名/目录下
+在手机上启动frida server端 执行 frida -U -f com.xxx.xxx -l dexDump.js --no-pause 脱壳后的dex保存在/data/data/应用包名/目录下
 
 0x3 适用环境
 ----
