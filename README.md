@@ -21,3 +21,11 @@ References
 - Frida-Android-unpack (xiaokanghub) https://github.com/xiaokanghub/Frida-Android-unpack
 
 Supported OS: Android 4.4 - Android 11
+
+Tested Packers
+---------------
+
+- Jiagu
+- DexProtector
+- DexGuard
+- Yidun
