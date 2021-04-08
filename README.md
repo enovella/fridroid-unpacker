@@ -29,3 +29,5 @@ Tested Packers
 - DexProtector
 - DexGuard
 - Yidun
+- Tencent Legu 
+- Mobile Tencent Protect
