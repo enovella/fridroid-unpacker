@@ -8,6 +8,16 @@
  * Support Version: Android 4.4 up to Android 11.0
  */
 
+/* Read a C++ std string (basic_string) to a nomal string */
+function readStdString(ptr_str) {
+    const isTiny = (ptr_str.readU8() & 1) === 0;
+    if (isTiny) {
+      return ptr_str.add(1).readUtf8String();
+    }
+
+    return ptr_str.add(2 * Process.pointerSize).readPointer().readUtf8String();
+}
+
 
 function logPrint(log) {
     var theDate = new Date();
@@ -124,103 +134,106 @@ function arraybuffer2hexstr(buffer)
     return hexArr.join(' ');
 }
 
-function checkDexMagic(dataAddr){
-    var magicMatch = true;
-    var magicFlagHex = [0x64, 0x65, 0x78, 0x0a, 0x30, 0x33, 0x35, 0x00];
+function checkMagic(dataAddr) { // Throws access violation errors, not handled at all.
+    let dexMagic = 'dex\n'; // [0x64, 0x65, 0x78, 0x0a]
+    let dexVersions = ['035', '037', '038', '039', '040']; // Same as above (hex -> ascii)
+    let odexVersions = ['036'];
+    let kDexMagic = 'cdex'; // [0x63, 0x64, 0x65, 0x78]
+    let kDexVersions = ['001'];
+    let magicTrailing = 0x00;
 
-    for(var i = 0; i < 8; i++){
-        if(Memory.readU8(ptr(dataAddr).add(i)) !== magicFlagHex[i]){
-            magicMatch = false;
-            break;
-        }
+    let readData
+    try {
+        readData = ptr(dataAddr).readByteArray(8)
+    } catch (e) {
+        logPrint('Error reading memory at address' + dataAddr);
+        return {found: false, wrongMagic: 0xDEADBEEF};
     }
+    let magic = Array.from( new Uint8Array( readData ) );
 
-    return magicMatch;
+    let foundStart = magic.slice(0,4).map(i => String.fromCharCode(i)).join('');
+    let foundVersion = magic.slice(4,7).map(i => String.fromCharCode(i)).join('');
+    let foundMagicString = foundStart.replace('\n', '') + foundVersion; // Printable string
+
+    if (foundStart === dexMagic && dexVersions.includes(foundVersion) && magic[7] === magicTrailing) {
+        // Found a dex
+        return {found: true, ext: 'dex', sizeOffset: 0x20, magicString: foundMagicString};
+    } else if (foundStart === dexMagic && odexVersions.includes(foundVersion) && magic[7] === magicTrailing) {
+        // Found an odex (only version number differs, same magic)
+        return {found: true, ext: 'odex', sizeOffset: 0x1C, magicString: foundMagicString};
+    } else if (foundStart === kDexMagic && kDexVersions.includes(foundVersion) && magic[7] === magicTrailing) {
+        // Found a compact dex
+        return {found: true, ext: 'cdex', sizeOffset: 0x20, magicString: foundMagicString};
+    } else {
+        return {found: false, wrongMagic: magic};
+    }
 }
 
-function checkOdexMagic(dataAddr){
-    var magicMatch = true;
-    var magicFlagHex = [0x64, 0x65, 0x79, 0x0a, 0x30, 0x33, 0x36, 0x00];
+function dumpDexToFile(begin, dexInfo, processName, location) {
+    let dexSize = ptr(begin).add(dexInfo.sizeOffset).readInt();
+    let dexPath = "/data/data/" + processName + "/" + dexSize + "." + dexInfo.ext;
+    var dexFile = new File(dexPath, "wb");
 
-    for(var i = 0; i < 8; i++){
-        if(Memory.readU8(ptr(dataAddr).add(i)) !== magicFlagHex[i]){
-            magicMatch = false;
-            break;
-        }
-    }
+    dexFile.write(ptr(begin).readByteArray(dexSize));
+    dexFile.flush();
+    dexFile.close();
 
-    return magicMatch;
-}
-
-function dumpDexToFile(isDex, begin, g_processName) {
-    //console.log(hexdump(begin, { offset: 0, header: false, length: 64, ansi: false }));
-    var dexType;
-    isDex ? dexType = "dex" : dexType = "odex";
-    var magic = Memory.readUtf8String(begin).replace(/\n/g, '');
-    var address = ptr(begin).add(isDex ? 0x20 : 0x1C);
-    var dex_size = Memory.readInt(ptr(address));
-    var dex_path = "/data/data/" + g_processName + "/" + dex_size + "." + dexType;
-    var dex_file = new File(dex_path, "wb");
-
-    dex_file.write(Memory.readByteArray(begin, dex_size));
-    dex_file.flush();
-    dex_file.close();
-
-    logPrint("magic : " + magic );
-    logPrint("size  : " + dex_size);
-    logPrint("dumped " + dexType + " @ " + dex_path + "\n");
+    logPrint("magic        : " + dexInfo.magicString);
+    logPrint("size         : " + dexSize);
+    logPrint("orig location: " + location);
+    logPrint("dumped " + dexInfo.ext + " @ " + dexPath + "\n");
 }
 
 function dumpDex(moduleFuncName, g_processName){
-    if(moduleFuncName !== ""){
-        var hookFunction;
-        if (g_AndroidOSVersion > 4) {
-            hookFunction = Module.findExportByName("libart.so", moduleFuncName);
-        } else {
-            hookFunction = Module.findExportByName("libdvm.so", moduleFuncName);
-            if(hookFunction == null) {
-                hookFunction = Module.findExportByName("libart.so", moduleFuncName);
-            }
-        }
-        Interceptor.attach(hookFunction,{
-            onEnter: function(args){
-                var begin = 0;
-                var dexMagicMatch = false;
-                var odexMagicMatch = false;
-
-                dexMagicMatch = checkDexMagic(args[0]);
-                if (dexMagicMatch === true){
-                    begin = args[0];
-                }else {
-                    odexMagicMatch = checkOdexMagic(args[0]);
-                    if (odexMagicMatch === true) {
-                        begin = args[0];
-                    }
-                }
-
-                if (begin === 0){
-                    dexMagicMatch = checkDexMagic(args[1]);
-                    if(dexMagicMatch === true) {
-                        begin = args[1];
-                    }else{
-                      odexMagicMatch = checkOdexMagic(args[1]);
-                      if(odexMagicMatch === true) {
-                          begin = args[1];
-                      }
-                    }
-                }
-                if (dexMagicMatch === true) {
-                    dumpDexToFile(dexMagicMatch, begin, g_processName);
-                } else if(odexMagicMatch === true) {
-                    dumpDexToFile(odexMagicMatch, begin, g_processName);
-                }
-            },
-            onLeave: function(retval) {
-            }
-        });
-    }else{
-	    logPrint("Error: cannot find correct module function.");
+    if (moduleFuncName == "") {
+        logPrint("Error: cannot find correct module function.");
+        return;
     }
+
+    var hookFunction;
+    if (g_AndroidOSVersion > 4) {
+        hookFunction = Module.findExportByName("libart.so", moduleFuncName);
+    } else {
+        hookFunction = Module.findExportByName("libdvm.so", moduleFuncName);
+        if(hookFunction == null) {
+            hookFunction = Module.findExportByName("libart.so", moduleFuncName);
+        }
+    }
+
+    Interceptor.attach(hookFunction,{
+        onEnter: function(args){
+            let begin, dexInfo, location;
+
+            dexInfo = checkMagic(args[0]);
+            begin = args[0];
+            if (!dexInfo.found) {
+                wrongMagic0 = dexInfo.wrongMagic
+                dexInfo = checkMagic(args[1]);
+                begin = args[1];
+            }
+            if (!dexInfo.found) {
+                throw new Error(
+                    'Could not identify magic, found invalid values ' +
+                    wrongMagic0.map(i => i.toString(16).padStart(2, '0')).join('') +
+                    ' ' +
+                    dexInfo.wrongMagic.map(i => i.toString(16).padStart(2, '0')).join('')
+                )
+            }
+
+            for (let i = 0; i < 10; i++) {
+            // Try all parameters
+                try {
+                    location = readStdString(ptr(args[i]));
+                } catch {} // Illegal memory access
+                if (location != null && location.length > 0 && location.includes('/')) {
+                    // != null catches both undefined and null
+                    break;
+                }
+            }
+
+            dumpDexToFile(begin, dexInfo, g_processName, location);
+        },
+    });
 }
 
 // Main code
